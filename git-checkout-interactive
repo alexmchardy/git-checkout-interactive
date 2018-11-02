@@ -1,0 +1,215 @@
+#!/bin/bash
+
+format_label=$(tput bold; tput setaf 6)
+format_hash=$(tput setaf 1)
+format_date=$(tput bold; tput setaf 4)
+format_author=$(tput setaf 2)
+format_ref_name=$(tput setaf 3)
+# format_highlight=$(tput setab 1)
+format_begin_highlight=$(tput smul)
+format_end_highlight=$(tput rmul)
+format_begin_search=$(tput smso)
+format_end_search=$(tput rmso)
+reset_all=$(tput sgr0)
+reset=$(tput dim; tput setaf 7)
+
+let term_line_count=$(tput lines)-2
+let term_col_count=$(tput cols)-1
+
+a_code=$(LC_CTYPE=C printf %d "'A")
+function get_row {
+  case $1 in
+    [0-9] )
+      printf $1
+      ;;
+    [a-zA-Z] )
+      upper=$(printf $1 | tr '[a-z]' '[A-Z]')
+      upper_code=$(LC_CTYPE=C printf %d "'$upper")
+      printf $(( $upper_code - $a_code + 10 ))
+      ;;
+    *)
+      printf "0"
+      ;;
+  esac
+}
+
+labels=(0 1 2 3 4 5 6 7 8 9 A B C D E F G H I J K L M N O P Q R S T U V W X Y Z)
+tput smcup # swap to alternate terminal session
+tput civis # invisble cursor
+trap "tput rmcup; tput cnorm; exit 255" SIGINT SIGTERM
+
+let line_limit=$(($term_line_count<${#labels[@]}?$term_line_count:${#labels[@]}))
+
+unprinted_chars="${format_label}${reset}${format_date}${reset}${format_hash}${reset}${format_author}${reset}${format_ref_name}${reset}"
+unprinted_char_count=${#unprinted_chars}
+let char_limit=$term_col_count+$unprinted_char_count
+
+
+# Make for loop split output on line boundries
+IFS=$(echo -en "\n\b")
+
+i=0
+lines=()
+branches=()
+for line in $(git for-each-ref refs/heads --format="%(refname:short)|[%(authorname)]|%(authordate:relative)|%(objectname:short)|%(subject)" --sort="-authordate" | head -n $line_limit);
+do
+  fields=(`echo $line | tr "|" "\n"`)
+  branches+=(${fields[0]})
+  lineout=$(printf "${format_label}${labels[$i]}   ${reset}${format_ref_name}%-45s ${reset}${format_author}%-20s ${reset}${format_date}%15s  ${reset}${format_hash}%s  ${reset}%s\n" ${fields[*]})
+  lines+=(${lineout::char_limit})
+  echo ${lines[$i]}
+  let i=$i+1
+done
+
+line_count=$i
+
+row=0
+prev_row=  # previously chosen row
+function choose_row {
+  row=$1
+  # reset previously chosen row
+  if [ -n "${prev_row}" ]; then
+    tput rc # restore to saved cursor position
+    tput el # clear to end of line
+    echo "${lines[$prev_row]}"
+  fi
+  tput cup $row 0 # move to row col
+  tput sc # save cursor position
+  tput el # clear to end of line
+  echo "${format_begin_highlight}${lines[$row]}${format_end_highlight}"
+  let prev_row=$row
+}
+
+function find_first_row {
+  local find_term=$1
+  shift;
+  local find_lines=("$@")
+  local find_line_count="${#find_lines[@]}"
+  # echo TERM $find_term
+  # echo FINDLINES ${#find_lines[@]}
+  # return
+
+  # # for i in "${find_lines[@]}"; do
+  i=0
+  # while fine_line in
+  # IFS=' '
+  # for i in $(seq 0 $(( $find_line_count - 1))); do
+  # for i in "0 1"; do
+  for find_line in "${find_lines[@]}"; do
+    # echo THELINE $the_line
+    # break
+  #  if [[ "${find_lines[$i]}" == "${find_term}" ]]; then
+   if test "${find_line#*$find_term}" != "${find_line}"; then
+       echo "${i}";
+       break
+   fi
+   i=$(( i+1 ))
+  done
+}
+
+function repaint {
+  tput clear
+  local repaint_lines=("$@")
+  # echo "repaint_lines" "${#repaint_lines[@]}"
+  for line in "${repaint_lines[@]}"
+  do
+    echo "${line}"
+  done
+}
+
+delete_seq=$(tput kbs)
+up_arrow_seq=$(tput kcuu1)
+down_arrow_seq=$(tput kcud1)
+
+choose_row 0
+
+# IFS=$(echo -en "\n")
+while read -s -n 1 key
+do
+  case "$key" in
+    [0-9a-zA-Z] )
+      row=$(get_row $key)
+      choose_row $row
+      ;;
+
+    '/' )
+      search_term=""
+      first_found_line=
+      search_lines=()
+      while read -s -n1 key
+      do
+        case "$key" in
+          $'\033' ) # Escape
+            # read -s -n 1 key
+            # case "$key" in
+            #   "" )
+                repaint "${lines[@]}"
+                choose_row $row
+                break;
+                ;;
+              # [0\[] )
+              #   read -s -n 1 key
+              #   case "$key" in
+              #     "${delete_seq:2:1}" )
+              #       search_term=${search_term::${#search_term}-1}
+              #       key=""
+              #       ;;
+              #   esac
+              #   ;;
+              # esac
+              # ;;
+          "" ) # Enter
+            prev_row=$row
+            break 2; # break to git checkout
+            ;;
+        esac
+        search_term+=$key
+        echo TERM $search_term
+        IFS= search_lines=( ${lines[@]/$search_term/"${format_begin_search}$search_term${format_end_search}"} )
+        first_found_line=$(find_first_row $search_term "${search_lines[@]}")
+        search_lines[$first_found_line]="${format_begin_highlight}${search_lines[$first_found_line]}${format_end_highlight}"
+        row=$first_found_line
+        repaint "${search_lines[@]}"
+      done
+      ;;
+
+    # $'\x1b' ) # Escape sequence
+    # $'\x1b' ) # Escape sequence
+    $'\033' ) # Escape sequence
+    # "${up_arrow_seq:0:1}" ) # Escape sequence
+      read -s -n 1 key
+      case "$key" in
+        "" ) # Esc key
+          exit 255
+          ;;
+        # "${up_arrow_seq:1:1}" )
+        [0\[] )
+          read -s -n 1 key
+          case "$key" in
+            "${up_arrow_seq:2:1}" )
+              if [ "$row" -gt 0 ]; then
+                choose_row $(( $row - 1 ))
+              fi
+              ;;
+            "${down_arrow_seq:2:1}" )
+              if [ "$row" -lt "$(( $line_count - 1 ))" ]; then
+                choose_row $(( $row + 1 ))
+              fi
+              ;;
+          esac
+          ;;
+      esac
+      ;;
+
+    "" ) # Enter key
+      echo BREAK
+      break
+      ;;
+  esac
+done
+
+tput rmcup # swap back to original terminal session
+tput cnorm # visble cursor
+
+# echo ${branches[$prev_input]}
+git checkout ${branches[$prev_row]}
