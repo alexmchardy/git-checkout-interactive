@@ -1,68 +1,180 @@
 #!/bin/bash
 
-format_label=$(tput bold; tput setaf 6)
-format_hash=$(tput setaf 1)
-format_date=$(tput bold; tput setaf 4)
-format_author=$(tput setaf 2)
-format_ref_name=$(tput setaf 3)
+red=$(tput setaf 1)
+green=$(tput setaf 2)
+yellow=$(tput setaf 3)
+blue=$(tput setaf 4)
+magenta=$(tput setaf 5)
+cyan=$(tput setaf 6)
+
+format_label=$magenta
+format_hash=$red
+format_date=$blue
+format_author=$green
+format_ref_name=$yellow
 # format_highlight=$(tput setab 1)
 format_begin_highlight=$(tput smul)
 format_end_highlight=$(tput rmul)
 format_begin_search=$(tput smso)
 format_end_search=$(tput rmso)
 reset_all=$(tput sgr0)
-reset=$(tput dim; tput setaf 7)
+reset=$(tput setaf 7)
+# reset=$reset_all
 
-let term_line_count=$(tput lines)-2
-let term_col_count=$(tput cols)-1
+printf $(tput bold)
 
-a_code=$(LC_CTYPE=C printf %d "'A")
-function get_row {
+delete_seq=$(tput kbs) # escape sequence for delete
+up_arrow_seq=$(tput kcuu1) # escape sequence for up arrow
+down_arrow_seq=$(tput kcud1) # escape sequence for down arrow
+
+function shutdown {
+  stty echo # enable user output to terminal
+  tput rmcup; # swap back to original terminal session
+  tput cnorm; # make cursor visible again
+  exit 255;
+}
+trap shutdown SIGINT SIGTERM
+
+stty -echo # disable user output to terminal
+
+# Make for loops split output on line boundries
+IFS=$(echo -en "\n\b")
+
+function get_cursor_position {
+  local pos=()
+  exec < /dev/tty
+  oldstty=$(stty -g)
+  stty raw -echo min 0
+  # on my system, the following line can be replaced by the line below it
+  # echo -en "\033[6n" > /dev/tty
+  printf "\033[6n" > /dev/tty
+  # tput u7 > /dev/tty    # when TERM=xterm (and relatives)
+  IFS=';' read -r -d R -a pos
+  stty $oldstty
+  # change from one-based to zero based so they work with: tput cup $row $col
+  row=$((${pos[0]:2} - 1))    # strip off the esc-[
+  col=$((${pos[1]} - 1))
+  local position=(${row} ${col})
+  printf "${position[@]}"
+}
+
+## Log debug messages below normal output on the screen
+log_count=0
+function logit {
+  if ! { [ "$DEBUG" = "true" ] || [ "$DEBUG" = "1" ] ;} ; then return 0; fi
+  local log_row=$(( ${#lines[@]} + 3 + $log_count ))
+  let log_count=$log_count+1
+  tput sc # save cursor position
+  # local cursor_pos=("$(get_cursor_position)") # save cursor position
+  tput cup $log_row 0 # move to row col
+  # tput el # clear to end of line
+  echo "$@"
+  tput rc # restore to saved cursor position
+  # tput cup "${cursor_pos[@]}" # move to row col
+}
+
+labels=(0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50)
+tput smcup # swap to alternate terminal session
+tput civis # invisble cursor
+
+function get_term_col_count {
+  printf $(( $(tput cols) ))
+}
+
+# Setup formatting based on terminal width
+term_col_count=$(get_term_col_count)
+help_lines=3 # number of lines used for command help output at the bottom
+# echo $term_col_count; sleep 1; kill -TERM $$;
+if [ "$term_col_count" -lt 66 ]; then
+  git_format="%(HEAD)%(refname:short)"
+  line_format="${format_label}%-2s ${reset}${format_ref_name}%s${reset}\n"
+  unprinted_chars="${format_label}${reset}${format_ref_name}${reset}\n"
+  help_format="${format_date}%s${reset}-${format_author}%s${reset}\n"
+  help_lines=5 # help is now vertical
+elif [ "$term_col_count" -lt 87 ]; then
+  git_format="%(HEAD)%(refname:short)|%(authordate:relative)"
+  line_format="${format_label}%-2s ${reset}${format_ref_name}%-45.45s ${reset}${format_date}%15.15s  ${reset}\n"
+  unprinted_chars="${format_label}${reset}${format_ref_name}${reset}${format_date}${reset}\n"
+  help_format="${format_date}%s${reset}-${format_author}%s${reset}  "
+elif [ "$term_col_count" -lt 110 ]; then
+  git_format="%(HEAD)%(refname:short)|[%(authorname)]|%(authordate:relative)"
+  line_format="${format_label}%-2s ${reset}${format_ref_name}%-45.45s ${reset}${format_author}%-20.20s ${reset}${format_date}%15.15s  ${reset}\n"
+  unprinted_chars="${format_label}${reset}${format_ref_name}${reset}${format_author}${reset}${format_date}${reset}\n"
+  help_format="${format_date}%s${reset} - ${format_author}%s${reset}     "
+elif [ "$term_col_count" -lt 135 ]; then
+  git_format="%(HEAD)%(refname:short)|[%(authorname)]|%(authordate:relative)|%(subject)"
+  line_format="${format_label}%-2s ${reset}${format_ref_name}%-45.45s ${reset}${format_author}%-20.20s ${reset}${format_date}%15.15s  ${reset}%s\n"
+  unprinted_chars="${format_label}${reset}${format_ref_name}${reset}${format_author}${reset}${format_date}${reset}\n"
+  help_format="${format_date}%s${reset} - ${format_author}%s${reset}       "
+else
+  git_format="%(HEAD)%(refname:short)|[%(authorname)]|%(authordate:relative)|%(objectname:short)|%(subject)"
+  line_format="${format_label}%-2s ${reset}${format_ref_name}%-45.45s ${reset}${format_author}%-20.20s ${reset}${format_date}%15.15s  ${reset}${format_hash}%s  ${reset}%s\n"
+  unprinted_chars="${format_label}${reset}${format_ref_name}${reset}${format_author}${reset}${format_date}${reset}${format_hash}${reset}\n"
+  help_format="${format_date}%s${reset} - ${format_author}%s${reset}         "
+fi
+
+function get_term_line_count {
+  printf $(( $(tput lines)-$help_lines )) # terminal lines available with extra room for command help
+}
+
+function get_char_limit {
+  printf $(( ${term_col_count}+${#unprinted_chars}-2 )) # terminal columns, adding extra room for unprinted chars
+}
+
+term_line_count=$(get_term_line_count)
+line_limit=$(($term_line_count<${#labels[@]}?$term_line_count:${#labels[@]}))
+
+git_lines=$(git for-each-ref refs/heads --format="$git_format" --sort="-authordate" --count=$line_limit);
+
+# Build and print initial output
+i=0
+lines=()
+branches=()
+char_limit=$(get_char_limit)
+#  echo $term_col_count; echo ${#unprinted_chars}; sleep 1; kill -TERM $$;
+for line in $git_lines
+do
+  fields=(`echo $line | tr "|" "\n"`)
+  branches+=(${fields[0]:1}) # refname field minus the leading character ('*'/' ')
+  line_fields=( ${labels[$i]} ${fields[@]} )
+  lineout=$(printf ${line_format} ${line_fields[@]} )
+  lines+=(${lineout})
+  echo ${lines[$i]::$char_limit}
+  let i=$i+1
+done
+line_count=$i
+
+function show_command_help {
+  local cmd_row=$(( ${line_count} + 1 ))
+  tput cup $cmd_row 0
+  local cmd_keys=("j/k J/K ⬇︎/⬆︎" "/" "Enter" "q")
+  local cmd_actions=("Move up/down" "Search" "Git checkout" "Quit")
+  local i=0
+  for key in "${cmd_keys[@]}"
+  do
+    printf "$help_format" $key ${cmd_actions[$i]}
+    let i=i+1
+  done
+}
+show_command_help
+
+# Return closest valid row to the passed arg
+function get_valid_row {
   case $1 in
-    [0-9] )
-      printf $1
-      ;;
-    [a-zA-Z] )
-      upper=$(printf $1 | tr '[a-z]' '[A-Z]')
-      upper_code=$(LC_CTYPE=C printf %d "'$upper")
-      printf $(( $upper_code - $a_code + 10 ))
+    [0-9] | [1-9][0-9] )
+      if [ "$1" -lt "$line_count" ]; then
+        printf $1
+      else
+        printf $(( $line_count - 1 ))
+      fi
       ;;
     *)
-      printf "0"
+      printf 0
       ;;
   esac
 }
 
-labels=(0 1 2 3 4 5 6 7 8 9 A B C D E F G H I J K L M N O P Q R S T U V W X Y Z)
-tput smcup # swap to alternate terminal session
-tput civis # invisble cursor
-trap "tput rmcup; tput cnorm; exit 255" SIGINT SIGTERM
-
-let line_limit=$(($term_line_count<${#labels[@]}?$term_line_count:${#labels[@]}))
-
-unprinted_chars="${format_label}${reset}${format_date}${reset}${format_hash}${reset}${format_author}${reset}${format_ref_name}${reset}"
-unprinted_char_count=${#unprinted_chars}
-let char_limit=$term_col_count+$unprinted_char_count
-
-
-# Make for loop split output on line boundries
-IFS=$(echo -en "\n\b")
-
-i=0
-lines=()
-branches=()
-for line in $(git for-each-ref refs/heads --format="%(refname:short)|[%(authorname)]|%(authordate:relative)|%(objectname:short)|%(subject)" --sort="-authordate" | head -n $line_limit);
-do
-  fields=(`echo $line | tr "|" "\n"`)
-  branches+=(${fields[0]})
-  lineout=$(printf "${format_label}${labels[$i]}   ${reset}${format_ref_name}%-45s ${reset}${format_author}%-20s ${reset}${format_date}%15s  ${reset}${format_hash}%s  ${reset}%s\n" ${fields[*]})
-  lines+=(${lineout::char_limit})
-  echo ${lines[$i]}
-  let i=$i+1
-done
-
-line_count=$i
-
+# Unhighlights previously highlighted row, and highlights passed-in row
 row=0
 prev_row=  # previously chosen row
 function choose_row {
@@ -71,13 +183,31 @@ function choose_row {
   if [ -n "${prev_row}" ]; then
     tput rc # restore to saved cursor position
     tput el # clear to end of line
-    echo "${lines[$prev_row]}"
+    echo "${lines[$prev_row]::$char_limit}"
   fi
   tput cup $row 0 # move to row col
   tput sc # save cursor position
   tput el # clear to end of line
-  echo "${format_begin_highlight}${lines[$row]}${format_end_highlight}"
-  let prev_row=$row
+  echo "${format_begin_highlight}${lines[$row]::$char_limit}${format_end_highlight}"
+  prev_row=$row
+}
+
+function move_up {
+  local move_count=${1:-1} ## move_count defaults to 1
+  if [ "$row" -ge "$move_count" ]; then
+    choose_row $(( $row - $move_count ))
+  else
+    choose_row 0
+  fi
+}
+
+function move_down {
+  local move_count=${1:-1} ## move_count defaults to 1
+  if [ "$row" -lt "$(( $line_count - $move_count ))" ]; then
+    choose_row $(( $row + $move_count ))
+  else
+    choose_row $(( $line_count - 1 ))
+  fi
 }
 
 function find_first_row {
@@ -108,28 +238,55 @@ function find_first_row {
 }
 
 function repaint {
-  tput clear
+  # tput clear
+  tput ech "${#lines[@]}"
+  tput home
   local repaint_lines=("$@")
-  # echo "repaint_lines" "${#repaint_lines[@]}"
+  # logit "repaint_lines" "${#repaint_lines[@]}"
   for line in "${repaint_lines[@]}"
   do
-    echo "${line}"
+    echo "${line::$char_limit}"
   done
 }
 
-delete_seq=$(tput kbs)
-up_arrow_seq=$(tput kcuu1)
-down_arrow_seq=$(tput kcud1)
-
+# Start off on first row
 choose_row 0
 
-# IFS=$(echo -en "\n")
-while read -s -n 1 key
+# Begin reading user input
+while read -r -s -n 1 key
 do
   case "$key" in
-    [0-9a-zA-Z] )
-      row=$(get_row $key)
-      choose_row $row
+    [qQ] )
+      kill -TERM $$
+      ;;
+
+    'j' )
+      move_down
+      ;;
+
+    'k' )
+      move_up
+      ;;
+
+    'J' )
+      move_down 10
+      ;;
+
+    'K' )
+      move_up 10
+      ;;
+
+    '0' ) # choosing row 0
+      choose_row $key
+      ;;
+
+    [1-9] ) # choosing row 1-n (could be multiple digits)
+      choose_row $key
+      key2=""
+      read -t 1 -s -n 1 key2 # allow 1 second for user to enter second digit
+      row="${key}""${key2}"
+      choose_row $(get_valid_row $row)
+      # break
       ;;
 
     '/' )
@@ -164,7 +321,7 @@ do
             ;;
         esac
         search_term+=$key
-        echo TERM $search_term
+        # logit "TERM" $search_term
         IFS= search_lines=( ${lines[@]/$search_term/"${format_begin_search}$search_term${format_end_search}"} )
         first_found_line=$(find_first_row $search_term "${search_lines[@]}")
         search_lines[$first_found_line]="${format_begin_highlight}${search_lines[$first_found_line]}${format_end_highlight}"
@@ -173,28 +330,17 @@ do
       done
       ;;
 
-    # $'\x1b' ) # Escape sequence
-    # $'\x1b' ) # Escape sequence
     $'\033' ) # Escape sequence
-    # "${up_arrow_seq:0:1}" ) # Escape sequence
-      read -s -n 1 key
+      read -s -n 1 key # read next character in escape sequence
       case "$key" in
-        "" ) # Esc key
-          exit 255
-          ;;
-        # "${up_arrow_seq:1:1}" )
         [0\[] )
-          read -s -n 1 key
+          read -s -n 1 key # read next character in escape sequence
           case "$key" in
             "${up_arrow_seq:2:1}" )
-              if [ "$row" -gt 0 ]; then
-                choose_row $(( $row - 1 ))
-              fi
+              move_up
               ;;
             "${down_arrow_seq:2:1}" )
-              if [ "$row" -lt "$(( $line_count - 1 ))" ]; then
-                choose_row $(( $row + 1 ))
-              fi
+              move_down
               ;;
           esac
           ;;
@@ -202,14 +348,13 @@ do
       ;;
 
     "" ) # Enter key
-      echo BREAK
       break
       ;;
   esac
 done
 
+stty echo # enable user output to terminal
 tput rmcup # swap back to original terminal session
 tput cnorm # visble cursor
 
-# echo ${branches[$prev_input]}
 git checkout ${branches[$prev_row]}
