@@ -92,22 +92,22 @@ if [ "$term_col_count" -lt 66 ]; then
   help_format="${format_date}%s${reset}-${format_author}%s${reset}\n"
   help_lines=5 # help is now vertical
 elif [ "$term_col_count" -lt 87 ]; then
-  git_format="%(HEAD)%(refname:short)|%(authordate:relative)"
+  git_format="%(HEAD)%(refname:short):|:%(authordate:relative)"
   line_format="${format_label}%-2s ${reset}${format_ref_name}%-45.45s ${reset}${format_date}%15.15s  ${reset}\n"
   unprinted_chars="${format_label}${reset}${format_ref_name}${reset}${format_date}${reset}\n"
   help_format="${format_date}%s${reset}-${format_author}%s${reset}  "
 elif [ "$term_col_count" -lt 110 ]; then
-  git_format="%(HEAD)%(refname:short)|[%(authorname)]|%(authordate:relative)"
+  git_format="%(HEAD)%(refname:short):|:[%(authorname)]:|:%(authordate:relative)"
   line_format="${format_label}%-2s ${reset}${format_ref_name}%-45.45s ${reset}${format_author}%-20.20s ${reset}${format_date}%15.15s  ${reset}\n"
   unprinted_chars="${format_label}${reset}${format_ref_name}${reset}${format_author}${reset}${format_date}${reset}\n"
   help_format="${format_date}%s${reset} - ${format_author}%s${reset}     "
 elif [ "$term_col_count" -lt 135 ]; then
-  git_format="%(HEAD)%(refname:short)|[%(authorname)]|%(authordate:relative)|%(subject)"
+  git_format="%(HEAD)%(refname:short):|:[%(authorname)]:|:%(authordate:relative):|:%(subject)"
   line_format="${format_label}%-2s ${reset}${format_ref_name}%-45.45s ${reset}${format_author}%-20.20s ${reset}${format_date}%15.15s  ${reset}%s\n"
   unprinted_chars="${format_label}${reset}${format_ref_name}${reset}${format_author}${reset}${format_date}${reset}\n"
   help_format="${format_date}%s${reset} - ${format_author}%s${reset}       "
 else
-  git_format="%(HEAD)%(refname:short)|[%(authorname)]|%(authordate:relative)|%(objectname:short)|%(subject)"
+  git_format="%(HEAD)%(refname:short):|:[%(authorname)]:|:%(authordate:relative):|:%(objectname:short):|:%(subject)"
   line_format="${format_label}%-2s ${reset}${format_ref_name}%-45.45s ${reset}${format_author}%-20.20s ${reset}${format_date}%15.15s  ${reset}${format_hash}%s  ${reset}%s\n"
   unprinted_chars="${format_label}${reset}${format_ref_name}${reset}${format_author}${reset}${format_date}${reset}${format_hash}${reset}\n"
   help_format="${format_date}%s${reset} - ${format_author}%s${reset}         "
@@ -134,7 +134,7 @@ char_limit=$(get_char_limit)
 #  echo $term_col_count; echo ${#unprinted_chars}; sleep 1; kill -TERM $$;
 for line in $git_lines
 do
-  fields=(`echo $line | tr "|" "\n"`)
+  fields=(`echo $line | sed -e "s/:|:/\n/g"`)
   branches+=(${fields[0]:1}) # refname field minus the leading character ('*'/' ')
   line_fields=( ${labels[$i]} ${fields[@]} )
   lineout=$(printf ${line_format} ${line_fields[@]} )
